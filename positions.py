@@ -1,15 +1,15 @@
 #!.venv/bin/python
-import asyncio,base64,json,time,websockets,requests,os
+import asyncio,base64,json,time,websockets,os,logging,redis
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
+
+from kalshi_ref import KalshiHttpClient
 
 
 KEY_ID = os.getenv("PROD_KEYID")
 PRIVATE_KEY_PATH = os.getenv("PROD_KEYFILE")
 WS_URL = "wss://api.elections.kalshi.com/trade-api/ws/v2"
-
-with open(PRIVATE_KEY_PATH, "rb") as f:
-    private_key = serialization.load_pem_private_key(f.read(), password=None)
+KALSHI_URL = "https://api.elections.kalshi.com"
 
 def create_headers(private_key, method: str, path: str) -> dict:
     """Create authentication headers"""
@@ -34,20 +34,50 @@ def sign_pss_text(private_key, text: str) -> str:
     return base64.b64encode(signature).decode("utf-8")
 
 
-ws_headers = create_headers(private_key, "GET", "/trade-api/ws/v2")
+async def track_positions(r: redis.Redis):
+    with open(PRIVATE_KEY_PATH, "rb") as f:
+        private_key = serialization.load_pem_private_key(f.read(), password=None)
+    ws_headers = create_headers(private_key, "GET", "/trade-api/ws/v2")
+    try:
+        async with websockets.connect(WS_URL, additional_headers=ws_headers) as websocket:
+                mkt_pos_subscribe_msg = {
+                    "id": 1,
+                    "cmd": "subscribe",
+                    "params": {
+                        "channels": ["market_positions"],
+                    },
+                }
+                await websocket.send(json.dumps(mkt_pos_subscribe_msg))
+                mkt_pos_subscribe_msg = {
+                    "id": 2,
+                    "cmd": "subscribe",
+                    "params": {
+                        "channels": ["fill"],
+                    },
+                }
+                await websocket.send(json.dumps(mkt_pos_subscribe_msg))
+                async for message in websocket:
+                    message = json.loads(message)
+                    logging.info(message)
+                    if message["type"] == "market_position":
+                        update = message["msg"]
+                        r.hset('positions', mapping = {update['market_ticker']:update['position']})
+                    elif message["type"] == "fill":
+                        pass
+                        
 
-async def track_positions():
-    async with websockets.connect(WS_URL, additional_headers=ws_headers) as websocket:
-            mkt_pos_subscribe_msg = {
-                "id": 3,
-                "cmd": "subscribe",
-                "params": {
-                    "channels": ["market_positions"],
-                },
-            }
-            await websocket.send(json.dumps(mkt_pos_subscribe_msg))
-            async for message in websocket:
-                print(message)
+    except asyncio.CancelledError:
+         logging.error("cancelled")
 
 if __name__ == "__main__":
-    asyncio.run(track_positions())
+    logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
+    with open(PRIVATE_KEY_PATH, "rb") as f:
+        private_key = serialization.load_pem_private_key(f.read(), password=None)
+    r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+    client = KalshiHttpClient(os.getenv("PROD_KEYID"),private_key)
+    response = client.get('/trade-api/v2/portfolio/positions')
+    for mkt in response['market_positions']:
+        logging.info((mkt['ticker'],mkt['position']))
+        r.hset('positions',mapping = {mkt['ticker']: mkt['position']})
+        
+    asyncio.run(track_positions(r))
