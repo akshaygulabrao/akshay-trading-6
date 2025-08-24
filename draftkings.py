@@ -10,13 +10,8 @@ def on_message(msg, r: redis.Redis, channel_name='football'):
             return
         decoded = msgpack.unpackb(msg, raw=False)
         if decoded[1] == "update":
-            if len(decoded[2][0][2][2]) == 0:
-                pass
-                # print("EVENT")
-                # print(decoded[2][0][2][0][0][1])
-            if len(decoded[2][0][2][2]) == 1:
-                print(decoded[2][0][2][2][0][1])
-                r.publish(channel_name,json.dumps({"data": decoded[2][0][2][2][0][1]}))
+            print(decoded[2])
+            r.publish(channel_name,json.dumps({"data": decoded[2]}))
 
     except Exception as e:
         print("on_message error:", e)
