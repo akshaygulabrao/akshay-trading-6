@@ -14,26 +14,28 @@ team2opp = {"Daniil Medvedev": "Benjamin Bonzi", "Benjamin Bonzi": "Daniil Medve
 def maybe_place_order(team1, odds1, team2, odds2):
     positions_long = r.hget("positions", team2mkt[team1]["long"])
     positions_short = r.hget("positions", team2mkt[team1]["short"])
-    positions_long = positions_long if positions_long is not None else 0
-    positions_short = positions_short if positions_short is not None else 0
+    positions_long = int(positions_long) if positions_long is not None else 0
+    positions_short = int(positions_short) if positions_short is not None else 0
     logging.info(f"{positions_long},{positions_short}")
-    try:
-        if positions_long == 0 and len(team1longbid) == 0:
-            order_bid = {
-                "ticker": team2mkt[team1]["long"],
-                "side": "yes",
-                "action": "buy",
-                "count": 1,
-                "type" : "limit",
-                "yes_price": odds1 - 1,
-                "client_order_id": str(uuid.uuid4()),
-                "post_only": True,
-            }
-            order_id = client.post('/trade-api/v2/portfolio/orders',order_bid)
-            team1longbid.add(order_id)
-    except:
-        print(team2mkt, odds1,team1,order_bid)
-        raise
+
+    if positions_long == 0 and len(team1longbid) == 0:
+        order_bid = {
+            "ticker": team2mkt[team1]["long"],
+            "side": "yes",
+            "action": "buy",
+            "count": 1,
+            "type" : "limit",
+            "yes_price": odds1 - 1,
+            "client_order_id": str(uuid.uuid4()),
+            "post_only": True,
+        }
+        print(order_bid)
+        order_id = client.post('/trade-api/v2/portfolio/orders',order_bid)
+        team1longbid.add(order_id)
+        print(team1longbid)
+    else:
+        print(positions_long,team1longbid)
+
 
 
 
@@ -47,24 +49,29 @@ def convert_odds(odds1, odds2):
 def process_message(msg):
     """Process incoming Redis messages."""
     try:
-        if not (msg[0] in [17,22,24]):
+        print(msg)
+        if not (msg[0] in [17,24]):
             return
         if msg[0] == 24: # opponents come in seperately
             team1 = msg[2]
-            odds1 = msg[3]
+            team1_odds = re.sub(r'[−–—]', '-', msg[3])
             if team1 not in team2odds:
-                team2odds[team1] = odds1
-            team2 = team2opp[team1]
-            odds2 = team2odds[team2]
+                team2odds[team1] = team1_odds
             
-
-
-        if msg[0] == 17:
+            team2 = team2opp[team1]
+            if team2 in team2odds:
+                team2_odds = team2odds[team2]
+            else:
+                print("Opposing odds not found")
+                return
+            
+        if msg[0] == 17 and msg[22] not in ["FeaturedSubcategory", "Primary Market"]:
             team1_odds = re.sub(r'[−–—]', '-', msg[12])
             team2_odds = re.sub(r'[−–—]', '-', msg[22])
             team1 = msg[10]
             team2 = msg[20]
-            
+
+        print(team1,team1_odds, team2,team2_odds)
         probs1,probs2= convert_odds(team1_odds,team2_odds)
         odds1 = round(probs1 * 100)
         odds2 = round(probs2 * 100)
