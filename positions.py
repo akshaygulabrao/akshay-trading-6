@@ -65,7 +65,7 @@ async def track_positions(r: redis.Redis):
                             r.hset('positions', mapping = {update['market_ticker']:update['position']})
                         elif message["type"] == "fill":
                             pass
-        except ConnectionResetError:
+        except (ConnectionResetError,websockets.ConnectionClosedError):
             pass
         except asyncio.CancelledError:
             logging.error("cancelled")
