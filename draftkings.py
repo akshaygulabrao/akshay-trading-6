@@ -18,7 +18,7 @@ def on_message(msg, r: redis.Redis, channel_name='football'):
         if isinstance(msg, str):
             return
         decoded = msgpack.unpackb(msg, raw=False)
-        if decoded[1] == "update" and channel_name == "baseball":
+        if decoded[1] == "update":
             ans = []
             flatten(decoded[2],ans)
             print(ans)
