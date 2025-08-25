@@ -3,15 +3,26 @@ import asyncio, redis, logging, msgpack, os, argparse,json,re
 from functools import partial
 from playwright.async_api import async_playwright
 
+def flatten(a,ans):
+    for item in a:
+        if isinstance(item,list):
+            flatten(item,ans)
+        if isinstance(item,dict):
+            for k,v in item.items():
+                ans.extend([k,v])
+        elif isinstance(item,(str,int,float)):
+            ans.append(item)
 
 def on_message(msg, r: redis.Redis, channel_name='football'):
     try:
         if isinstance(msg, str):
             return
         decoded = msgpack.unpackb(msg, raw=False)
-        if decoded[1] == "update":
-            print(decoded[2])
-            r.publish(channel_name,json.dumps({"data": decoded[2]}))
+        if decoded[1] == "update" and channel_name == "baseball":
+            ans = []
+            flatten(decoded[2],ans)
+            print(ans)
+            r.publish(channel_name,json.dumps(ans))
 
     except Exception as e:
         print("on_message error:", e)
