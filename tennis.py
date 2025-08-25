@@ -7,9 +7,12 @@ from cryptography.hazmat.primitives import serialization
 from kalshi_ref import KalshiHttpClient
 import redis
 
-team2mkt = {"Daniil Medvedev": {"long": "KXATPMATCH-25AUG24MEDBON-MED", "short": "KXATPMATCH-25AUG24MEDBON-BON"}}
+team2mkt = {"Jan-Lennard Struff": {"long": "KXATPMATCH-25AUG25STRMCD-STR", "short": "KXATPMATCH-25AUG25STRMCD-MCD"}}
 team2odds = {}
-team2opp = {"Daniil Medvedev": "Benjamin Bonzi", "Benjamin Bonzi": "Daniil Medvedev"}
+team2opp = [("Jan-Lennard Struff","Mackenzie McDonald"),("Hugo Dellien","Kamil Majchrzak")]
+
+for a, b in team2opp:
+    team2opp[a] = b; team2opp[b] = a
 
 def maybe_place_order(team1, odds1, team2, odds2):
     positions_long = r.hget("positions", team2mkt[team1]["long"])
@@ -30,8 +33,8 @@ def maybe_place_order(team1, odds1, team2, odds2):
             "post_only": True,
         }
         print(order_bid)
-        order_id = client.post('/trade-api/v2/portfolio/orders',order_bid)
-        team1longbid.add(order_id)
+        # order_id = client.post('/trade-api/v2/portfolio/orders',order_bid)
+        # team1longbid.add(order_id)
         print(team1longbid)
     else:
         print(positions_long,team1longbid)
