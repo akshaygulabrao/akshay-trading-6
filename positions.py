@@ -38,36 +38,38 @@ async def track_positions(r: redis.Redis):
     with open(PRIVATE_KEY_PATH, "rb") as f:
         private_key = serialization.load_pem_private_key(f.read(), password=None)
     ws_headers = create_headers(private_key, "GET", "/trade-api/ws/v2")
-    try:
-        async with websockets.connect(WS_URL, additional_headers=ws_headers) as websocket:
-                mkt_pos_subscribe_msg = {
-                    "id": 1,
-                    "cmd": "subscribe",
-                    "params": {
-                        "channels": ["market_positions"],
-                    },
-                }
-                await websocket.send(json.dumps(mkt_pos_subscribe_msg))
-                mkt_pos_subscribe_msg = {
-                    "id": 2,
-                    "cmd": "subscribe",
-                    "params": {
-                        "channels": ["fill"],
-                    },
-                }
-                await websocket.send(json.dumps(mkt_pos_subscribe_msg))
-                async for message in websocket:
-                    message = json.loads(message)
-                    logging.info(message)
-                    if message["type"] == "market_position":
-                        update = message["msg"]
-                        r.hset('positions', mapping = {update['market_ticker']:update['position']})
-                    elif message["type"] == "fill":
-                        pass
-                        
-
-    except asyncio.CancelledError:
-         logging.error("cancelled")
+    while True:
+        try:
+            async with websockets.connect(WS_URL, additional_headers=ws_headers) as websocket:
+                    mkt_pos_subscribe_msg = {
+                        "id": 1,
+                        "cmd": "subscribe",
+                        "params": {
+                            "channels": ["market_positions"],
+                        },
+                    }
+                    await websocket.send(json.dumps(mkt_pos_subscribe_msg))
+                    mkt_pos_subscribe_msg = {
+                        "id": 2,
+                        "cmd": "subscribe",
+                        "params": {
+                            "channels": ["fill"],
+                        },
+                    }
+                    await websocket.send(json.dumps(mkt_pos_subscribe_msg))
+                    async for message in websocket:
+                        message = json.loads(message)
+                        logging.info(message)
+                        if message["type"] == "market_position":
+                            update = message["msg"]
+                            r.hset('positions', mapping = {update['market_ticker']:update['position']})
+                        elif message["type"] == "fill":
+                            pass
+        except ConnectionResetError:
+            pass
+        except asyncio.CancelledError:
+            logging.error("cancelled")
+            raise
 
 if __name__ == "__main__":
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
