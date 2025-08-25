@@ -8,6 +8,8 @@ from kalshi_ref import KalshiHttpClient
 import redis
 
 team2mkt = {"Daniil Medvedev": {"long": "KXATPMATCH-25AUG24MEDBON-MED", "short": "KXATPMATCH-25AUG24MEDBON-BON"}}
+team2odds = {}
+team2opp = {"Daniil Medvedev": "Benjamin Bonzi", "Benjamin Bonzi": "Daniil Medvedev"}
 
 def maybe_place_order(team1, odds1, team2, odds2):
     positions_long = r.hget("positions", team2mkt[team1]["long"])
@@ -15,6 +17,24 @@ def maybe_place_order(team1, odds1, team2, odds2):
     positions_long = positions_long if positions_long is not None else 0
     positions_short = positions_short if positions_short is not None else 0
     logging.info(f"{positions_long},{positions_short}")
+    try:
+        if positions_long == 0 and len(team1longbid) == 0:
+            order_bid = {
+                "ticker": team2mkt[team1]["long"],
+                "side": "yes",
+                "action": "buy",
+                "count": 1,
+                "type" : "limit",
+                "yes_price": odds1 - 1,
+                "client_order_id": str(uuid.uuid4()),
+                "post_only": True,
+            }
+            order_id = client.post('/trade-api/v2/portfolio/orders',order_bid)
+            team1longbid.add(order_id)
+    except:
+        print(team2mkt, odds1,team1,order_bid)
+        raise
+
 
 
 def convert_odds(odds1, odds2):
@@ -27,22 +47,27 @@ def convert_odds(odds1, odds2):
 def process_message(msg):
     """Process incoming Redis messages."""
     try:
-        if not ((msg[2] == "Moneyline" and msg[0] == 17)) or msg[22] in ["FeaturedSubcategory", "PrimaryMarket"]:
+        if not (msg[0] in [17,22,24]):
             return
+        if msg[0] == 24: # opponents come in seperately
+            team1 = msg[2]
+            odds1 = msg[3]
+            if team1 not in team2odds:
+                team2odds[team1] = odds1
+            team2 = team2opp[team1]
+            odds2 = team2odds[team2]
+            
 
-        # Extract and clean team data
-        team1_odds = re.sub(r'[−–—]', '-', msg[12])
-        team2_odds = re.sub(r'[−–—]', '-', msg[22])
-        
-        try:
-            prob1, prob2 = convert_odds(team1_odds, team2_odds)
-        except Exception as e:
-            logging.error(f"Failed to convert odds: {msg}")
-            raise
 
-        # Print market information
-        team1, odds1 = msg[10], round(prob1 * 100)
-        team2, odds2 = msg[20], round(prob2 * 100)
+        if msg[0] == 17:
+            team1_odds = re.sub(r'[−–—]', '-', msg[12])
+            team2_odds = re.sub(r'[−–—]', '-', msg[22])
+            team1 = msg[10]
+            team2 = msg[20]
+            
+        probs1,probs2= convert_odds(team1_odds,team2_odds)
+        odds1 = round(probs1 * 100)
+        odds2 = round(probs2 * 100)
         print(team1,odds1,team2,odds2)
         if team1 in team2mkt:
             maybe_place_order(team1,odds1,team2,odds2)
@@ -59,6 +84,7 @@ with open(os.getenv("PROD_KEYFILE"), "rb") as f:
     private_key = serialization.load_pem_private_key(f.read(), password=None)
 client = KalshiHttpClient(os.getenv("PROD_KEYID"), private_key)
 logging.info(client.get_balance())
+team1longbid = set()
 
 for message in pubsub.listen():
     process_message(json.loads(message['data']))
