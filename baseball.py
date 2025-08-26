@@ -13,11 +13,9 @@ r = redis.Redis(host='localhost', port=6379, decode_responses=True)
 pubsub = r.pubsub(ignore_subscribe_messages=True)
 pubsub.subscribe('baseball')
 
-team2kalshi_mkts = {"CIN Reds": {"long": "KXMLBGAME-25AUG24CINAZ-CIN", "short": "KXMLBGAME-25AUG24CINAZ-AZ"},
-                    "ARI Diamondbacks": {"long": "KXMLBGAME-25AUG24CINAZ-AZ", "short": "KXMLBGAME-25AUG24CINAZ-CIN"},
-                    "LA Dodgers": {"long": "KXMLBGAME-25AUG24LADSD-LAD", "short": "KXMLBGAME-25AUG24LADSD-SD"}, 
-                    "SD Padres": {"long": "KXMLBGAME-25AUG24LADSD-SD", "short": "KXMLBGAME-25AUG24LADSD-LAD"}
-                    }
+team2kalshi_id = {"CIN Reds": "CIN", "ARI Diamondbacks": "AZ", "LA Dodgers": "LAD", "SD Padres": "SD",
+                  "SEA Mariners": "SEA", "Athletics": "ATH", "DET Tigers": "DET"}
+
 
 # Initialize Kalshi client
 with open(os.getenv("PROD_KEYFILE"), "rb") as f:
@@ -35,25 +33,27 @@ def convert_odds(odds1, odds2):
 def process_message(msg):
     """Process incoming Redis messages."""
     try:
-        if not ((msg[2] == "Moneyline" and msg[0] == 17)) or msg[22] in ["FeaturedSubcategory", "PrimaryMarket"]:
-            return
+        if msg[0] == 17 and len(msg) > 31:
+            team1_odds = re.sub(r'[−–—]', '-', msg[12])
+            team2_odds = re.sub(r'[−–—]', '-', msg[22])
+            team1 = msg[10]
+            team2 = msg[20]
+            team1_kalshi = team2kalshi_id.get(team1,None)
+            team2_kalshi = team2kalshi_id.get(team2,None)
+            r.hset(f"baseball:odds", mapping = {team1: team1_odds, team2: team2_odds})
+            print(f"{team1_kalshi}: {team1_odds}, {team2_kalshi}: {team2_odds}")
 
-        # Extract and clean team data
-        team1_odds = re.sub(r'[−–—]', '-', msg[12])
-        team2_odds = re.sub(r'[−–—]', '-', msg[22])
+        elif msg[0] == 17 and len(msg) == 31:
+            team1_odds = re.sub(r'[−–—]', '-', msg[12])
+            team1 = msg[10]
+            print(team1,team1_odds)
+        elif msg[0] == 24 and "ML" in msg[1]:
+            team1 = msg[2]
+            team1_odds = re.sub(r'[−–—]', '-', msg[3])
+            team1_kalshi = team2kalshi_id.get(team1,None)
+            r.hset(f"baseball:odds", mapping = {team1: team1_odds})
+            print(f"{team1_kalshi}: {team1_odds}")
         
-        try:
-            prob1, prob2 = convert_odds(team1_odds, team2_odds)
-        except Exception as e:
-            logging.error(f"Failed to convert odds: {msg}")
-            raise
-
-        # Print market information
-        team1, odds1 = msg[10], round(prob1 * 100)
-        team2, odds2 = msg[20], round(prob2 * 100)
-        print(team1,odds1,team2,odds2)
-        
-
 
     except:
         print(msg)
