@@ -68,7 +68,7 @@ def process_message(msg):
                 print("Opposing odds not found")
                 return
             
-        if msg[0] == 17 and msg[22] not in ["FeaturedSubcategory", "Primary Market"]:
+        elif msg[0] == 17 and len(msg) > 31:
             team1_odds = re.sub(r'[−–—]', '-', msg[12])
             team2_odds = re.sub(r'[−–—]', '-', msg[22])
             team1 = msg[10]
