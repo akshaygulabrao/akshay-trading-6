@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json
+import json,requests
 import logging
 import os
 import re
@@ -7,14 +7,14 @@ import uuid
 from cryptography.hazmat.primitives import serialization
 from kalshi_ref import KalshiHttpClient
 import redis
+from datetime import datetime
 
 # Initialize Redis connection
 r = redis.Redis(host='localhost', port=6379, decode_responses=True)
 pubsub = r.pubsub(ignore_subscribe_messages=True)
 pubsub.subscribe('baseball')
 
-team2kalshi_id = {"CIN Reds": "CIN", "ARI Diamondbacks": "AZ", "LA Dodgers": "LAD", "SD Padres": "SD",
-                  "SEA Mariners": "SEA", "Athletics": "ATH", "DET Tigers": "DET"}
+team2kalshi_id = {"CIN Reds": "CIN", "ARI Diamondbacks": "AZ", "LA Dodgers": "LAD", "SD Padres": "SD","SEA Mariners": "SEA", "Athletics": "ATH", "DET Tigers": "DET"}
 
 
 # Initialize Kalshi client
@@ -50,8 +50,9 @@ def process_message(msg):
         elif msg[0] == 24 and "ML" in msg[1]:
             team1 = msg[2]
             team1_odds = re.sub(r'[−–—]', '-', msg[3])
-            team1_kalshi = team2kalshi_id.get(team1,None)
             r.hset(f"baseball:odds", mapping = {team1: team1_odds})
+            
+            team1_kalshi = team2kalshi_id.get(team1,None)
             print(f"{team1_kalshi}: {team1_odds}")
         
 
@@ -76,7 +77,15 @@ def place_order(ticker, price):
     }
     logging.info(f"Placing order: {order}")
 
+logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
+logging.info("Fetching baseball tickers")
+today = datetime.today()
 
-print("Listening...")
+formatted_date = today.strftime("%y%b%d").upper()
+response = requests.get("https://api.elections.kalshi.com/trade-api/v2/markets", {"series_ticker": "KXMLBGAME", "status": "open"})
+for i in response.json()['markets']:
+    if formatted_date in i['ticker']:
+        print(i['ticker'])
+
 for message in pubsub.listen():
     process_message(json.loads(message['data']))
