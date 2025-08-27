@@ -191,14 +191,16 @@ def process_message(msg, player2tickers, players2opp,allowed_to_trade,client,r):
     try:
         if msg[0] not in [17,24]: return
         if msg[0] == 17 and len(msg) > 31:
-            team1_odds = re.sub(r'[−–—]', '-', msg[12])
-            team2_odds = re.sub(r'[−–—]', '-', msg[22])
-            team1 = msg[10]
-            team2 = msg[20]
-            # team1_kalshi = team2kalshi_id.get(team1,None)
-            # team2_kalshi = team2kalshi_id.get(team2,None)
+            teams = []
+            for i in range(len(msg)):
+                if isinstance(msg[i],str) and "ML" in msg[i]:
+                    teams.append([msg[i+1],msg[i+3]])
+            team1,team1_odds = teams[0]
+            team2,team2_odds = teams[1]
+            team1_odds = re.sub(r'[−–—]', '-', team1_odds)
+            team2_odds = re.sub(r'[−–—]', '-', team2_odds)
+
             r.hset(f"us-open-men:odds", mapping = {team1: team1_odds, team2: team2_odds})
-            # print(f"{team1_kalshi}: {team1_odds}, {team2_kalshi}: {team2_odds}")
 
         elif msg[0] == 17 and len(msg) == 31:
             team1_odds = re.sub(r'[−–—]', '-', msg[12])
@@ -215,8 +217,6 @@ def process_message(msg, player2tickers, players2opp,allowed_to_trade,client,r):
             team2 = player2opp[team1]
             team2_odds = r.hget("us-open-men:odds", team2)
             
-            # team1_kalshi = team2kalshi_id.get(team1,None)
-            # print(f"{team1_kalshi}: {team1_odds}")
         logging.info(f"{team1,team1_odds,team2,team2_odds}")
         team1_odds,team2_odds,vig = convert_odds(team1_odds,team2_odds)
         if team1 in allowed_to_trade or team2 in allowed_to_trade:
