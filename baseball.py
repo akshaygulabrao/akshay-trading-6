@@ -123,7 +123,7 @@ def process_message(msg, player2tickers, player2opp,allowed_to_trade,client,r):
         logging.info(f"{team1,team1_odds,team2,team2_odds}")
         team1_odds,team2_odds,vig = convert_odds(team1_odds,team2_odds)
         if team1 in allowed_to_trade or team2 in allowed_to_trade:
-            maybe_place_order(team1,team1_odds,team2, team2_odds,vig,client,r)
+            maybe_place_order(team1,team1_odds,team2, team2_odds,player2opp, player2tickers,vig,client,r)
 
 
     except:
@@ -131,23 +131,62 @@ def process_message(msg, player2tickers, player2opp,allowed_to_trade,client,r):
         raise
 
 
-def maybe_place_order(ticker, price):
-    """Place a buy order if no position exists."""
-    pass
-    pos = r.hget('positions', ticker)
-    pos = pos if pos is not None else 0
+def maybe_place_order(team1, odds1, team2, odds2, vig,player2tickers, player2opp,client:KalshiHttpClient,r:redis.Redis):
+    try:
+        # logging.info(f"%s",locals())
+        print(player2opp[team1], player2opp[team2])
+        assert player2opp[team1] == team2 and player2opp[team2] == team1
+        sell_side1, buy_side1  = player2tickers[team1]
+        sell_side2,buy_side2 = player2tickers[team2]
 
-    order = {
-        'client_order_id': str(uuid.uuid4()),
-        'action': 'buy',
-        'side': 'yes',
-        'ticker': ticker,
-        'type': 'limit',
-        'yes_price': price,
-        'count': 1,
-        'post_only': True
-    }
-    logging.info(f"Placing order: {order}")
+        positions_long1  = int(r.hget("positions", sell_side1)  or 0)
+        positions_short1 = int(r.hget("positions", buy_side1) or 0)
+        logging.info(f"{positions_long1},{positions_short1}")
+
+        positions_long2 = int(r.hget("positions", sell_side2) or 0)
+        positions_short2 = int(r.hget("positions", buy_side2) or 0)
+        logging.info(f"{positions_long2},{positions_short2}")
+
+        logging.info(f"limit sell {sell_side1} @ {odds1:0.2f}")
+        logging.info(f"limit buy {buy_side1} @ { 1- odds1:0.2f}")
+        
+        client_order = r.hget('orders', f'{sell_side1}:sell')
+        public_order, client_order = (None, None) if client_order is None else client_order.split(':')
+        if positions_long1 == 0 and positions_short1 == 0 and public_order is None and client_order is None:
+            client_market_order_id_sell = str(uuid.uuid4())
+            market_order_sell = {
+                'ticker': sell_side1,
+                'side' : 'yes',
+                'action': 'sell',
+                'count': 1,
+                'type': 'market',
+                'buy_max_cost': round(odds1*100),
+                'client_order_id': client_market_order_id_sell
+            }
+            client_market_order_id_buy = str(uuid.uuid4())
+            market_order_buy = {
+                'ticker': buy_side1,
+                'side' : 'yes',
+                'action': 'buy',
+                'count': 1,
+                'type': 'market',
+                'buy_max_cost': round((1-odds1)*100),
+                'client_order_id': client_market_order_id_buy
+            }
+            try:
+                client.post('/trade-api/v2/portfolio/orders',market_order_buy)
+                client.post('/trade-api/v2/portfolio/orders',market_order_sell)
+                logging.info("filled???")
+            except requests.exceptions.HTTPError:
+                logging.info("Coudln't fill (obviously)")
+                pass
+        else:
+            logging.info("existing position or limit order")
+            
+
+    except Exception:
+        logging.exception("maybe_place_order failed")
+        raise
 
 if __name__ == "__main__":
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
@@ -160,7 +199,7 @@ if __name__ == "__main__":
     logging.info(client.get_balance())
 
     player2opp,player2tickers = get_baseball_mappings()
-    allowed_to_trade = set([""])
+    allowed_to_trade = set(["DET Tigers"])
 
     for message in pubsub.listen():
         process_message(json.loads(message['data']),player2tickers,player2opp,allowed_to_trade,client,r)

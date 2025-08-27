@@ -62,7 +62,7 @@ def convert_odds(odds1, odds2):
     total = p1 + p2
     return p1, p2, total - 1
 
-def maybe_place_order(team1, odds1, team2, odds2, vig,client:KalshiHttpClient,r:redis.Redis):
+def maybe_place_order(team1, odds1, team2, odds2, vig,player2opp, player2tickers,client:KalshiHttpClient,r:redis.Redis):
     try:
         # logging.info(f"%s",locals())
         assert player2opp[team1] == team2 and player2opp[team2] == team1
@@ -220,7 +220,16 @@ def process_message(msg, player2tickers, player2opp,allowed_to_trade,client,r):
         logging.info(f"{team1,team1_odds,team2,team2_odds}")
         team1_odds,team2_odds,vig = convert_odds(team1_odds,team2_odds)
         if team1 in allowed_to_trade or team2 in allowed_to_trade:
-            maybe_place_order(team1,team1_odds,team2,team2_odds,vig,client,r)
+            maybe_place_order(team1,
+                              team1_odds,
+                              team2,
+                              team2_odds,
+                              vig,
+                              player2opp,
+                              player2tickers,
+                              client,
+                              r
+                            )
 
 
     except:

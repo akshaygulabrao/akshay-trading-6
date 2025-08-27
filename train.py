@@ -47,19 +47,73 @@ VARS = ['air_temp', 'dew_point', 'relative_humidity', 'wind_speed']
 N_STATIONS = len(STATIONS)
 N_VARS = len(VARS)
 
-sensor['observation_time'] = pd.to_datetime(sensor['observation_time'],utc=True,format="ISO8601")
-sensor['inserted_at'] = pd.to_datetime(sensor['inserted_at'],utc=True, format="ISO8601")
+klax_sensors = sensor[sensor['station'] == 'KLAX']
+klax_forecast = forecast[forecast['station'] == 'KLAX']
 
-forecast['observation_time'] = pd.to_datetime(sensor['observation_time'],utc=True,format="ISO8601")
-forecast['inserted_at'] = pd.to_datetime(sensor['inserted_at'],utc=True,format="ISO8601")
 
-print(sensor)
+all_forecasts = []
 
-print(forecast)
+# Process each forecast
+current_forecast = None
+current_forecast_time = None
 
-sensor = sensor.set_index("observation_time").groupby("station")[VARS].resample('H').mean().reset_index()
+for idx, row in klax_forecast.iterrows():
+    # Check if this is a new forecast (idx == 0)
+    if row['idx'] == 0:
+        # If we have a current forecast, add it to all_forecasts
+        if current_forecast is not None:
+            all_forecasts.append({
+                'forecast_time': current_forecast_time,
+                'data': current_forecast
+            })
+        
+        # Start new forecast
+        current_forecast = []
+        current_forecast_time = row['inserted_at']
+    
+    # Add the 4 variables for this forecast hour
+    if current_forecast is not None:
+        current_forecast.append([
+            row['air_temp'],
+            row['relative_humidity'],
+            row['dew_point'],
+            row['wind_speed']
+        ])
 
-forecast = forecast.set_index(["inserted_at","idx"])
+# Add the last forecast
+if current_forecast is not None:
+    all_forecasts.append({
+        'forecast_time': current_forecast_time,
+        'data': current_forecast
+    })
 
-print(sensor)
-print(forecast)
+# Now let's print the structure to verify
+# print("Number of forecasts:", len(all_forecasts))
+# print("\nFirst forecast (time:", all_forecasts[0]['forecast_time'], ")")
+# for hour_idx, hour_data in enumerate(all_forecasts[0]['data']):
+#     print(f"Hour {hour_idx}: temp={hour_data[0]:.1f}, rh={hour_data[1]:.1f}, dew={hour_data[2]:.1f}, wind={hour_data[3]:.1f}")
+
+# print("\nSecond forecast (time:", all_forecasts[1]['forecast_time'], ")")
+# for hour_idx, hour_data in enumerate(all_forecasts[1]['data']):
+#     print(f"Hour {hour_idx}: temp={hour_data[0]:.1f}, rh={hour_data[1]:.1f}, dew={hour_data[2]:.1f}, wind={hour_data[3]:.1f}")
+
+# Number of forecasts: 431
+
+# First forecast (time: 2025-08-04T06:00:00+00:00 )
+# Hour 0: temp=65.0, rh=87.0, dew=59.0, wind=3.0
+# Hour 1: temp=63.0, rh=89.0, dew=58.0, wind=3.0
+# Hour 2: temp=63.0, rh=89.0, dew=58.0, wind=3.0
+# Hour 3: temp=65.0, rh=86.0, dew=59.0, wind=5.0
+# ...
+# Hour 47: temp=65.0, rh=83.0, dew=58.0, wind=6.0
+
+# Second forecast (time: 2025-08-04T07:00:00+00:00 )
+# Hour 0: temp=63.0, rh=89.0, dew=58.0, wind=3.0
+# Hour 1: temp=63.0, rh=89.0, dew=58.0, wind=3.0
+# Hour 2: temp=65.0, rh=86.0, dew=59.0, wind=5.0
+# Hour 3: temp=65.0, rh=87.0, dew=59.0, wind=5.0
+# ...
+# Hour 47: temp=65.0, rh=84.0, dew=58.0, wind=5.0
+
+for i in klax_sensors.itertuples():
+    print(i.observation_time)  
