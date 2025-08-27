@@ -15,6 +15,11 @@ def get_tennis_mappings():
         params={"series_ticker": "KXATPMATCH", "status": "open"}
     ).json()['markets']
     
+    m = requests.get(
+        "https://api.elections.kalshi.com/trade-api/v2/markets",
+        params={"series_ticker": "KXWTAMATCH", "status": "open"}
+    ).json()['markets']
+    markets.extend(m)
     # Group by match using the vs pattern in titles
     matches = {}
     for m in markets:
@@ -80,9 +85,20 @@ def maybe_place_order(team1, odds1, team2, odds2, vig,player2opp, player2tickers
         logging.info(f"limit sell {sell_side1} @ {odds1:0.2f}")
         logging.info(f"limit buy {buy_side1} @ { 1- odds1:0.2f}")
         
-        client_order = r.hget('orders', f'{sell_side1}:sell')
-        public_order, client_order = (None, None) if client_order is None else client_order.split(':')
-        if positions_long1 == 0 and positions_short1 == 0 and public_order is None and client_order is None:
+        client_order_sell = r.hget('orders', f'{sell_side1}:sell')
+        public_order_sell, client_order_sell = (None, None) if client_order_sell is None else client_order.split(':')
+
+        client_order_buy = r.hget('orders', f'{sell_side1}:sell')
+        public_order_buy, client_order_buy = (None, None) if client_order_buy is None else client_order.split(':')
+        
+
+        
+        client_order = r.hget(f'orders', f'{buy_side1}:buy')
+        if positions_long1 == 0 and \
+            positions_short1 == 0 and \
+            (public_order_sell,client_order_sell) == (None,None) and \
+            (public_order_buy,client_order_buy) == (None,None):
+
             client_market_order_id_sell = str(uuid.uuid4())
             market_order_sell = {
                 'ticker': sell_side1,
@@ -214,6 +230,7 @@ def process_message(msg, player2tickers, player2opp,allowed_to_trade,client,r):
             team1 = msg[2]
             team1_odds = re.sub(r'[−–—]', '-', msg[3])
             r.hset(f"us-open-men:odds", mapping = {team1: team1_odds})
+            if team1 not in player2opp: return
             team2 = player2opp[team1]
             team2_odds = r.hget("us-open-men:odds", team2)
             
@@ -248,7 +265,7 @@ if __name__ == "__main__":
     logging.info(client.get_balance())
 
     player2tickers, player2opp = get_tennis_mappings()
-    allowed_to_trade = set(["Roberto Bautista Agut"])
+    allowed_to_trade = set(["Jerome Kym"])
 
     for message in pubsub.listen():
         process_message(json.loads(message['data']),player2tickers,player2opp,allowed_to_trade,client,r)
