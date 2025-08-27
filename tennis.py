@@ -1,5 +1,6 @@
 #!.venv/bin/python
-import json,requests
+import json, requests
+from pydoc import cli
 from datetime import datetime
 import logging
 import os
@@ -9,39 +10,40 @@ from cryptography.hazmat.primitives import serialization
 from kalshi_ref import KalshiHttpClient
 import redis
 
+
 def get_tennis_mappings():
     markets = requests.get(
         "https://api.elections.kalshi.com/trade-api/v2/markets",
-        params={"series_ticker": "KXATPMATCH", "status": "open"}
-    ).json()['markets']
-    
+        params={"series_ticker": "KXATPMATCH", "status": "open"},
+    ).json()["markets"]
+
     m = requests.get(
         "https://api.elections.kalshi.com/trade-api/v2/markets",
-        params={"series_ticker": "KXWTAMATCH", "status": "open"}
-    ).json()['markets']
+        params={"series_ticker": "KXWTAMATCH", "status": "open"},
+    ).json()["markets"]
     markets.extend(m)
     # Group by match using the vs pattern in titles
     matches = {}
     for m in markets:
-        if match := re.search(r'the\s+(.+?)\s+match', m['title']):
+        if match := re.search(r"the\s+(.+?)\s+match", m["title"]):
             match_name = match.group(1)
-            player_name = re.search(r'Will\s+(.+?)\s+win', m['title']).group(1)
-            matches.setdefault(match_name, {})[player_name] = m['ticker']
-    
+            player_name = re.search(r"Will\s+(.+?)\s+win", m["title"]).group(1)
+            matches.setdefault(match_name, {})[player_name] = m["ticker"]
+
     # Create both mappings
     player2tickers = {}
     player2opp = {}
-    
+
     for players in matches.values():
         if len(players) == 2:
             player_list = list(players.items())
             p1, t1 = player_list[0]
             p2, t2 = player_list[1]
-            
+
             # Create ticker mapping
             player2tickers[p1] = [t1, t2]
             player2tickers[p2] = [t2, t1]
-            
+
             # Create opponent mapping (two-way)
             player2opp[p1] = p2
             player2opp[p2] = p1
@@ -57,169 +59,147 @@ def get_tennis_mappings():
 
 def convert_odds(odds1, odds2):
     """Convert moneyline odds to probabilities and return vig."""
-    prob = lambda o: 100/(float(o)+100) if float(o) > 0 else -float(o)/(-float(o)+100)
+    prob = lambda o: (
+        100 / (float(o) + 100) if float(o) > 0 else -float(o) / (-float(o) + 100)
+    )
     p1 = prob(odds1)
-    
+
     if odds2 is None:
         return p1, None, None
-    
+
     p2 = prob(odds2)
     total = p1 + p2
     return p1, p2, total - 1
 
-def maybe_place_order(team1, odds1, team2, odds2, vig,player2opp, player2tickers,client:KalshiHttpClient,r:redis.Redis):
+
+def maybe_place_order(
+    team1,
+    odds1,
+    team2,
+    odds2,
+    vig,
+    player2opp,
+    player2tickers,
+    client: KalshiHttpClient,
+    r: redis.Redis,
+):
+    """
+    There is a market for both players to win. The markets are consequently inverses of each other. When we receive an odds quote, we essentially want to place/modify 4 orders.
+
+    :param team1: Description
+    :param odds1: Description
+    :param team2: Description
+    :param odds2: Description
+    :param vig: Description
+    :param player2opp: Description
+    :param player2tickers: Description
+    :param client: Description
+    :type client: KalshiHttpClient
+    :param r: Description
+    :type r: redis.Redis
+    """
     try:
         # logging.info(f"%s",locals())
         assert player2opp[team1] == team2 and player2opp[team2] == team1
-        sell_side1, buy_side1  = player2tickers[team1]
-        sell_side2,buy_side2 = player2tickers[team2]
+        sell_side1, buy_side1 = player2tickers[team1]
 
-        positions_long1  = int(r.hget("positions", sell_side1)  or 0)
+        positions_long1 = int(r.hget("positions", sell_side1) or 0)
         positions_short1 = int(r.hget("positions", buy_side1) or 0)
         logging.info(f"{positions_long1},{positions_short1}")
 
-        positions_long2 = int(r.hget("positions", sell_side2) or 0)
-        positions_short2 = int(r.hget("positions", buy_side2) or 0)
-        logging.info(f"{positions_long2},{positions_short2}")
-
         logging.info(f"limit sell {sell_side1} @ {odds1:0.2f}")
-        logging.info(f"limit buy {buy_side1} @ { 1- odds1:0.2f}")
-        
-        client_order_sell = r.hget('orders', f'{sell_side1}:sell')
-        public_order_sell, client_order_sell = (None, None) if client_order_sell is None else client_order.split(':')
+        logging.info(f"limit buy {buy_side1} @ {1 - odds1:0.2f}")
 
-        client_order_buy = r.hget('orders', f'{sell_side1}:sell')
-        public_order_buy, client_order_buy = (None, None) if client_order_buy is None else client_order.split(':')
-        
+        client_order_sell = r.hget("orders", f"{sell_side1}:sell")
+        public_order_sell, client_order_sell = (
+            (None, None) if client_order_sell is None else client_order.split(":")
+        )
 
-        
-        client_order = r.hget(f'orders', f'{buy_side1}:buy')
-        if positions_long1 == 0 and \
-            positions_short1 == 0 and \
-            (public_order_sell,client_order_sell) == (None,None) and \
-            (public_order_buy,client_order_buy) == (None,None):
+        client_order_buy = r.hget("orders", f"{sell_side1}:sell")
+        public_order_buy, client_order_buy = (
+            (None, None) if client_order_buy is None else client_order.split(":")
+        )
+
+        client_order = r.hget(f"orders", f"{buy_side1}:buy")
+        if (
+            positions_long1 == 0
+            and positions_short1 == 0
+            and (public_order_sell, client_order_sell) == (None, None)
+            and (public_order_buy, client_order_buy) == (None, None)
+        ):
 
             client_market_order_id_sell = str(uuid.uuid4())
             market_order_sell = {
-                'ticker': sell_side1,
-                'side' : 'yes',
-                'action': 'sell',
-                'count': 1,
-                'type': 'market',
-                'buy_max_cost': round(odds1*100),
-                'client_order_id': client_market_order_id_sell
+                "ticker": sell_side1,
+                "side": "yes",
+                "action": "sell",
+                "count": 1,
+                "type": "market",
+                "buy_max_cost": round(odds1 * 100),
+                "client_order_id": client_market_order_id_sell,
             }
             client_market_order_id_buy = str(uuid.uuid4())
             market_order_buy = {
-                'ticker': buy_side1,
-                'side' : 'yes',
-                'action': 'buy',
-                'count': 1,
-                'type': 'market',
-                'buy_max_cost': round((1-odds1)*100),
-                'client_order_id': client_market_order_id_buy
+                "ticker": buy_side1,
+                "side": "yes",
+                "action": "buy",
+                "count": 1,
+                "type": "market",
+                "buy_max_cost": round((1 - odds1) * 100),
+                "client_order_id": client_market_order_id_buy,
             }
             try:
-                client.post('/trade-api/v2/portfolio/orders',market_order_buy)
-                client.post('/trade-api/v2/portfolio/orders',market_order_sell)
+                client.post("/trade-api/v2/portfolio/orders", market_order_buy)
                 logging.info("filled???")
             except requests.exceptions.HTTPError:
                 logging.info("Coudln't fill (obviously)")
                 pass
+            try:
+                client.post("/trade-api/v2/portfolio/orders", market_order_sell)
+                logging.info("filled???")
+            except requests.exceptions.HTTPError:
+                logging.info("Coudln't fill (obviously)")
+                pass
+        if positions_long1 >= 0:
+            client_limit_order_id_sell = str(uuid.uuid4())
+            limit_order_sell = {
+                "ticker": sell_side1,
+                "side": "yes",
+                "action": "buy",
+                "count": 1,
+                "type": "limit",
+                "yes_price": round(odds2 * 100),
+                "client_order_id": client_limit_order_id_sell,
+            }
+            public_order_sell = client.post('/trade-api/v2/portfolio/orders', limit_order_sell)['order']['order_id']
+            r.hset("odds", f"{sell_side1}:buy", ":".join([public_order_sell,client_limit_order_id_sell]))
+        
         else:
             logging.info("existing position or limit order")
-            
-
-
-        
-        # logging.info(f"limit sell {sell_side2} @ {odds2:0.2f}")
-        # logging.info(f"limit buy {buy_side2} @ { 1- odds2:0.2f}")
-
-
-
-
-        
-        # logging.info(f"limit sell {sell_side2} @ {odds2:0.2f}")
-
-
-
-    #     # Active order id / client id stored in Redis
-    #     order_key = f"orders:{long_ticker}"
-    #     active = r.hmget(order_key, "order_id", "client_id")
-    #     active_order_id, active_client_id = active[0], active[1]
-
-    #     # Price we want to bid
-    #     target_price = odds1 - 1 - round(vig * 50)
-
-    #     # CASE 1 – no position and no active order  →  create new
-    #     if positions_long == 0 and active_order_id is None:
-    #         c_uid = str(uuid.uuid4())
-    #         order_bid = {
-    #             "ticker": long_ticker,
-    #             "side": "yes",
-    #             "action": "buy",
-    #             "count": 1,
-    #             "type": "limit",
-    #             "yes_price": target_price,
-    #             "client_order_id": c_uid,
-    #             "post_only": True,
-    #         }
-    #         resp = client.post("/trade-api/v2/portfolio/orders", order_bid)
-    #         new_oid = resp["order"]["order_id"]
-    #         r.hset(order_key, mapping={"order_id": new_oid, "client_id": c_uid})
-    #         return
-
-    #     # CASE 2 – no position, but we have an active order  →  amend
-    #     elif positions_long == 0 and active_order_id is not None:
-    #         new_c_uid = str(uuid.uuid4())
-    #         amend = {
-    #             "ticker": long_ticker,
-    #             "side": "yes",
-    #             "client_order_id": active_client_id,
-    #             "updated_client_order_id": new_c_uid,
-    #             "action": "buy",
-    #             "count": 1,
-    #             "type": "limit",
-    #             "yes_price": target_price,
-    #             "post_only": True,
-    #         }
-    #         resp = client.post(
-    #             f"/trade-api/v2/portfolio/orders/{active_order_id}/amend", amend
-    #         )
-    #         new_oid = resp["order"]["order_id"]
-    #         r.hset(order_key, mapping={"order_id": new_oid, "client_id": new_c_uid})
-    #         return
-
-    #     # CASE 3 – we already have a position, do nothing
-    #     # (optional cleanup if you want to cancel stale orders)
+      
     except Exception:
         logging.exception("maybe_place_order failed")
-        raise
+        raise          
 
-
-
-
-
-
-
-def process_message(msg, player2tickers, player2opp,allowed_to_trade,client,r):
+def process_message(msg, player2tickers, player2opp, allowed_to_trade, client, r):
     """Process incoming Redis messages."""
     try:
-        if msg[0] not in [17,24]: return
+        if msg[0] not in [17, 24]:
+            return
         if msg[0] == 17 and len(msg) > 31:
             teams = []
             for i in range(len(msg)):
-                if isinstance(msg[i],str) and "ML" in msg[i]:
-                    teams.append([msg[i+1],msg[i+3]])
-            team1,team1_odds = teams[0]
-            team2,team2_odds = teams[1]
-            team1_odds = re.sub(r'[−–—]', '-', team1_odds)
-            team2_odds = re.sub(r'[−–—]', '-', team2_odds)
+                if isinstance(msg[i], str) and "ML" in msg[i]:
+                    teams.append([msg[i + 1], msg[i + 3]])
+            team1, team1_odds = teams[0]
+            team2, team2_odds = teams[1]
+            team1_odds = re.sub(r"[−–—]", "-", team1_odds)
+            team2_odds = re.sub(r"[−–—]", "-", team2_odds)
 
-            r.hset(f"us-open-men:odds", mapping = {team1: team1_odds, team2: team2_odds})
+            r.hset(f"us-open-men:odds", mapping={team1: team1_odds, team2: team2_odds})
 
         elif msg[0] == 17 and len(msg) == 31:
-            team1_odds = re.sub(r'[−–—]', '-', msg[12])
+            team1_odds = re.sub(r"[−–—]", "-", msg[12])
             team1 = msg[10]
             r.hset("us-open-men:odds", team1, team1_odds)
             team2 = player2opp[team1]
@@ -228,26 +208,27 @@ def process_message(msg, player2tickers, player2opp,allowed_to_trade,client,r):
 
         elif msg[0] == 24 and "ML" in msg[1]:
             team1 = msg[2]
-            team1_odds = re.sub(r'[−–—]', '-', msg[3])
-            r.hset(f"us-open-men:odds", mapping = {team1: team1_odds})
-            if team1 not in player2opp: return
+            team1_odds = re.sub(r"[−–—]", "-", msg[3])
+            r.hset(f"us-open-men:odds", mapping={team1: team1_odds})
+            if team1 not in player2opp:
+                return
             team2 = player2opp[team1]
             team2_odds = r.hget("us-open-men:odds", team2)
-            
-        logging.info(f"{team1,team1_odds,team2,team2_odds}")
-        team1_odds,team2_odds,vig = convert_odds(team1_odds,team2_odds)
-        if team1 in allowed_to_trade or team2 in allowed_to_trade:
-            maybe_place_order(team1,
-                              team1_odds,
-                              team2,
-                              team2_odds,
-                              vig,
-                              player2opp,
-                              player2tickers,
-                              client,
-                              r
-                            )
 
+        logging.info(f"{team1,team1_odds,team2,team2_odds}")
+        team1_odds, team2_odds, vig = convert_odds(team1_odds, team2_odds)
+        if team1 in allowed_to_trade or team2 in allowed_to_trade:
+            maybe_place_order(
+                team1,
+                team1_odds,
+                team2,
+                team2_odds,
+                vig,
+                player2opp,
+                player2tickers,
+                client,
+                r,
+            )
 
     except:
         print(locals())
@@ -255,10 +236,10 @@ def process_message(msg, player2tickers, player2opp,allowed_to_trade,client,r):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
-    r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+    logging.basicConfig(format="%(asctime)s %(message)s", level=logging.INFO)
+    r = redis.Redis(host="localhost", port=6379, decode_responses=True)
     pubsub = r.pubsub(ignore_subscribe_messages=True)
-    pubsub.subscribe('us-open-men')
+    pubsub.subscribe("us-open-men")
     with open(os.getenv("PROD_KEYFILE"), "rb") as f:
         private_key = serialization.load_pem_private_key(f.read(), password=None)
     client = KalshiHttpClient(os.getenv("PROD_KEYID"), private_key)
@@ -268,4 +249,11 @@ if __name__ == "__main__":
     allowed_to_trade = set(["Jerome Kym"])
 
     for message in pubsub.listen():
-        process_message(json.loads(message['data']),player2tickers,player2opp,allowed_to_trade,client,r)
+        process_message(
+            json.loads(message["data"]),
+            player2tickers,
+            player2opp,
+            allowed_to_trade,
+            client,
+            r,
+        )
