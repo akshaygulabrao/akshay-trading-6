@@ -88,7 +88,7 @@ def convert_odds(odds1, odds2):
     total = p1 + p2
     return p1, p2, total - 1
 
-def process_message(msg, player2tickers, players2opp,allowed_to_trade,client,r):
+def process_message(msg, player2tickers, player2opp,allowed_to_trade,client,r):
     """Process incoming Redis messages."""
     try:
         if msg[0] not in [17,24]: return
@@ -127,7 +127,7 @@ def process_message(msg, player2tickers, players2opp,allowed_to_trade,client,r):
 
 
     except:
-        print(msg)
+        print(player2opp)
         raise
 
 
@@ -159,7 +159,7 @@ if __name__ == "__main__":
     client = KalshiHttpClient(os.getenv("PROD_KEYID"), private_key)
     logging.info(client.get_balance())
 
-    player2tickers, player2opp = get_baseball_mappings()
+    player2opp,player2tickers = get_baseball_mappings()
     allowed_to_trade = set([""])
 
     for message in pubsub.listen():

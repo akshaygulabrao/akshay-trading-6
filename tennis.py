@@ -186,7 +186,7 @@ def maybe_place_order(team1, odds1, team2, odds2, vig,client:KalshiHttpClient,r:
 
 
 
-def process_message(msg, player2tickers, players2opp,allowed_to_trade,client,r):
+def process_message(msg, player2tickers, player2opp,allowed_to_trade,client,r):
     """Process incoming Redis messages."""
     try:
         if msg[0] not in [17,24]: return
@@ -220,7 +220,7 @@ def process_message(msg, player2tickers, players2opp,allowed_to_trade,client,r):
         logging.info(f"{team1,team1_odds,team2,team2_odds}")
         team1_odds,team2_odds,vig = convert_odds(team1_odds,team2_odds)
         if team1 in allowed_to_trade or team2 in allowed_to_trade:
-            maybe_place_order(team1,team1_odds,team2, team2_odds,vig,client,r)
+            maybe_place_order(team1,team1_odds,team2,team2_odds,vig,client,r)
 
 
     except:
