@@ -1,6 +1,5 @@
 #!.venv/bin/python
 import json, requests
-from pydoc import cli
 from datetime import datetime
 import logging
 import os
@@ -84,106 +83,161 @@ def maybe_place_order(
     r: redis.Redis,
 ):
     """
-    There is a market for both players to win. The markets are consequently inverses of each other. When we receive an odds quote, we essentially want to place/modify 4 orders.
-
-    :param team1: Description
-    :param odds1: Description
-    :param team2: Description
-    :param odds2: Description
-    :param vig: Description
-    :param player2opp: Description
-    :param player2tickers: Description
-    :param client: Description
-    :type client: KalshiHttpClient
-    :param r: Description
-    :type r: redis.Redis
+    Modified to adjust orders based on existing exposure.
     """
     try:
-        # logging.info(f"%s",locals())
+        # Validate that teams are opponents
         assert player2opp[team1] == team2 and player2opp[team2] == team1
+        
+        # Get tickers for both teams
         sell_side1, buy_side1 = player2tickers[team1]
+        sell_side2, buy_side2 = player2tickers[team2]
 
-        positions_long1 = int(r.hget("positions", sell_side1) or 0)
-        positions_short1 = int(r.hget("positions", buy_side1) or 0)
-        logging.info(f"{positions_long1},{positions_short1}")
+        # Get current positions for both teams
+        positions_long1 = int(r.hget("positions", buy_side1) or 0)
+        positions_short1 = int(r.hget("positions", sell_side1) or 0)
+        positions_long2 = int(r.hget("positions", buy_side2) or 0)
+        positions_short2 = int(r.hget("positions", sell_side2) or 0)
 
-        logging.info(f"limit sell {sell_side1} @ {odds1:0.2f}")
-        logging.info(f"limit buy {buy_side1} @ {1 - odds1:0.2f}")
+        # Calculate net exposure for each team
+        net_exposure_team1 = positions_short1 - positions_long1
+        net_exposure_team2 = -net_exposure_team1
 
-        client_order_sell = r.hget("orders", f"{sell_side1}:sell")
-        public_order_sell, client_order_sell = (
-            (None, None) if client_order_sell is None else client_order.split(":")
-        )
+        logging.info(f"Net exposure {team1}: {net_exposure_team1}")
+        logging.info(f"Net exposure {team2}: {net_exposure_team2}")
 
-        client_order_buy = r.hget("orders", f"{sell_side1}:sell")
-        public_order_buy, client_order_buy = (
-            (None, None) if client_order_buy is None else client_order.split(":")
-        )
-
-        client_order = r.hget(f"orders", f"{buy_side1}:buy")
-        if (
-            positions_long1 == 0
-            and positions_short1 == 0
-            and (public_order_sell, client_order_sell) == (None, None)
-            and (public_order_buy, client_order_buy) == (None, None)
-        ):
-
-            client_market_order_id_sell = str(uuid.uuid4())
-            market_order_sell = {
+        # Define potential orders with their impact on exposure
+        orders_to_consider = [
+            # Sell YES on team1 (increases short exposure on team1)
+            {
                 "ticker": sell_side1,
+                "side": "yes", 
+                "action": "sell",
+                "count": 1,
+                "type": "limit",
+                "yes_price": round(odds1 * 100),
+                "client_order_id": str(uuid.uuid4()),
+                "impact_team1": -1,  
+                "impact_team2": +1
+            },
+            # Buy YES on team2 (increases short exposure on team 1)
+            {
+                "ticker": buy_side1,
+                "side": "yes",
+                "action": "buy", 
+                "count": 1,
+                "type": "limit",
+                "yes_price": round((1 - odds1) * 100),
+                "client_order_id": str(uuid.uuid4()),
+                "impact_team1": -1,
+                "impact_team2": +1
+            },
+            # Sell YES on team2 (increases short exposure on team2)
+            {
+                "ticker": sell_side2,
                 "side": "yes",
                 "action": "sell",
                 "count": 1,
-                "type": "market",
-                "buy_max_cost": round(odds1 * 100),
-                "client_order_id": client_market_order_id_sell,
-            }
-            client_market_order_id_buy = str(uuid.uuid4())
-            market_order_buy = {
-                "ticker": buy_side1,
-                "side": "yes",
-                "action": "buy",
-                "count": 1,
-                "type": "market",
-                "buy_max_cost": round((1 - odds1) * 100),
-                "client_order_id": client_market_order_id_buy,
-            }
-            try:
-                client.post("/trade-api/v2/portfolio/orders", market_order_buy)
-                logging.info("filled???")
-            except requests.exceptions.HTTPError:
-                logging.info("Coudln't fill (obviously)")
-                pass
-            try:
-                client.post("/trade-api/v2/portfolio/orders", market_order_sell)
-                logging.info("filled???")
-            except requests.exceptions.HTTPError:
-                logging.info("Coudln't fill (obviously)")
-                pass
-        if positions_long1 >= 0:
-            client_limit_order_id_sell = str(uuid.uuid4())
-            limit_order_sell = {
-                "ticker": sell_side1,
+                "type": "limit",
+                "yes_price": round(odds2 * 100),
+                "client_order_id": str(uuid.uuid4()),
+                "impact_team1": +1,
+                "impact_team2": -1
+            },
+            # Buy YES on team1 (increases short exposure on team 2)
+            {
+                "ticker": buy_side2,
                 "side": "yes",
                 "action": "buy",
                 "count": 1,
                 "type": "limit",
-                "yes_price": round(odds2 * 100),
-                "client_order_id": client_limit_order_id_sell,
+                "yes_price": round((1 - odds2) * 100),
+                "client_order_id": str(uuid.uuid4()),
+                "impact_team1": +1,
+                "impact_team2": -1
             }
-            public_order_sell = client.post('/trade-api/v2/portfolio/orders', limit_order_sell)['order']['order_id']
-            r.hset("odds", f"{sell_side1}:buy", ":".join([public_order_sell,client_limit_order_id_sell]))
-        
-        else:
-            logging.info("existing position or limit order")
-      
+        ]
+
+        # Filter orders based on current exposure
+        filtered_orders = []
+        for order in orders_to_consider:
+            # Check if order would increase unfavorable exposure
+            impact_team1 = order['impact_team1']
+            impact_team2 = order['impact_team2']
+            
+            # Skip orders that increase net long exposure if already long
+            if (impact_team1 > 0 and net_exposure_team1 > 0) or \
+               (impact_team2 > 0 and net_exposure_team2 > 0):
+                logging.info(f"skipping {order['ticker']}:{order['action']}, too much exposure")
+                continue
+                
+            # Skip orders that increase net short exposure if already short
+            if (impact_team1 < 0 and net_exposure_team1 < 0) or \
+               (impact_team2 < 0 and net_exposure_team2 < 0):
+                logging.info(f"skipping {order['ticker']}:{order['action']}, too much exposure")
+                continue
+                
+            filtered_orders.append(order)
+
+        # Check for existing orders for the filtered set
+        orders_to_place = []
+        for order in filtered_orders:
+            order_key = f"{order['ticker']}:{order['action']}"
+            logging.info(f"{order_key}")
+            if not r.hget("orders", order_key):
+                orders_to_place.append(order)
+            else:
+                public_id,private_id = r.hget("orders",order_key).split(":")
+                logging.info(f"Existing order found for {order_key}, skipping")
+                updated_client_id = str(uuid.uuid4())
+                order = {
+                    "ticker": order['ticker'],
+                    "side": order['side'],
+                    "action": order['action'],
+                    "count": 1,
+                    "type": "limit",
+                    "yes_price": order['yes_price'],
+                    "client_order_id": private_id,
+                    "updated_client_order_id": updated_client_id,
+                    "impact_team1": +1,
+                    "impact_team2": -1
+                }
+                try:
+                    logging.info(f"amending order {order}")
+                    public_order_id = client.post(f'/trade-api/v2/portfolio/orders/{public_id}/amend', order)
+                    r.hset("orders", order_key, f"{public_order_id['order']['order_id']}:{order['updated_client_order_id']}")
+                except requests.exceptions.HTTPError as e:
+                    logging.error("Couldnt place order")
+                    r.hdel("orders", order_key)
+
+
+        # Place the filtered orders
+        for order in orders_to_place:
+            try:
+                logging.info(f"Placing {order['ticker']}:{order['action']}")
+                response = client.post("/trade-api/v2/portfolio/orders", order)
+                public_order_id = response['order']['order_id']
+                client_order_id = order['client_order_id']
+                
+                # Store order mapping in Redis
+                order_key = f"{order['ticker']}:{order['action']}"
+                r.hset("orders", order_key, f"{public_order_id}:{client_order_id}")
+                
+                logging.info(f"Placed {order['action']} order for {order['ticker']} "
+                           f"at price {order['yes_price']/100:.2f}")
+                
+            except requests.exceptions.HTTPError as e:
+                logging.error(f"Failed to place order for {order['ticker']}: {e}")
+                raise
+
     except Exception:
         logging.exception("maybe_place_order failed")
-        raise          
+        raise
 
 def process_message(msg, player2tickers, player2opp, allowed_to_trade, client, r):
     """Process incoming Redis messages."""
     try:
+        team1= ""
         if msg[0] not in [17, 24]:
             return
         if msg[0] == 17 and len(msg) > 31:
@@ -216,6 +270,7 @@ def process_message(msg, player2tickers, player2opp, allowed_to_trade, client, r
             team2_odds = r.hget("us-open-men:odds", team2)
 
         logging.info(f"{team1,team1_odds,team2,team2_odds}")
+
         team1_odds, team2_odds, vig = convert_odds(team1_odds, team2_odds)
         if team1 in allowed_to_trade or team2 in allowed_to_trade:
             maybe_place_order(
@@ -246,7 +301,9 @@ if __name__ == "__main__":
     logging.info(client.get_balance())
 
     player2tickers, player2opp = get_tennis_mappings()
-    allowed_to_trade = set(["Jerome Kym"])
+    allowed_to_trade = set(["Holger Rune"])
+    result = r.delete('orders')
+    print(f"Keys deleted: {result}") 
 
     for message in pubsub.listen():
         process_message(
